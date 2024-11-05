@@ -1,4 +1,3 @@
-# app.py
 import os
 import time
 import threading
@@ -14,6 +13,7 @@ load_dotenv()
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize the Slack Bolt app
 bolt_app = SlackBoltApp(
@@ -43,6 +43,31 @@ current_index = 0
 # Channel where the reminders will be posted
 channel_id = "C04AR90JPED"  # Replace with your channel ID
 
+def get_message_blocks(user_id):
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"<@{user_id}> is responsible for today's task."
+            }
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Skip"
+                    },
+                    "action_id": "skip_action",
+                    "value": "skip"
+                }
+            ]
+        }
+    ]
+
 def send_reminder():
     global current_index
     user_id = team_members[current_index]
@@ -51,30 +76,8 @@ def send_reminder():
     # Message with a Skip button using Block Kit
     client.chat_postMessage(
         channel=channel_id,
-        text=f"<@{user_id}> is responsible for today's task.",
-        blocks=[
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"<@{user_id}> is responsible for today's task."
-                }
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {
-                            "type": "plain_text",
-                            "text": "Skip"
-                        },
-                        "action_id": "skip_action",
-                        "value": "skip"
-                    }
-                ]
-            }
-        ]
+        text=f"<@{user_id}> is responsible for #devops_support today",
+        blocks=get_message_blocks(user_id)
     )
 
 # Schedule the send_reminder function to run every weekday at 9:00 AM
@@ -99,17 +102,20 @@ def handle_skip_action(ack, body, client, logger):
 
     global current_index
 
+    # Get the current user before skipping
+    current_user_id = team_members[current_index]
+
     # Move to the next person
     current_index = (current_index + 1) % len(team_members)
     next_user_id = team_members[current_index]
 
-    # Update the original message to mention the next person
+    # Update the original message to indicate skipping
     try:
         client.chat_update(
             channel=body["channel"]["id"],
             ts=body["message"]["ts"],
-            text=f"<@{next_user_id}> is now responsible for today's task.",
-            blocks=[]  # Remove the blocks to remove the button
+            text=f"<@{current_user_id}> is unavailable. <@{next_user_id}> is now responsible for #devops_support today",
+            blocks=get_message_blocks(next_user_id)
         )
     except Exception as e:
         logger.error(f"Failed to update message: {e}")

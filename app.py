@@ -29,19 +29,19 @@ handler = SlackRequestHandler(bolt_app)
 
 # List of team members' Slack user IDs
 team_members = [
-    "U01...",  # User 1
-    "U02...",  # User 2
-    "U03...",  # User 3
-    "U04...",  # User 4
-    "U05...",  # User 5
-    "U06...",  # User 6
+    "U07GAGKL6SY",  # User 1
+    "U04JZU760AD",  # User 2
+    "U06Q83GFMNW",  # User 3
+    "U07H9H7L7K8",  # User 4
+    "U041EHKCD3K",  # User 5
+    "U062AK6DQP9",  # User 6
 ]
 
 # Index to keep track of the current person responsible
 current_index = 0
 
 # Channel where the reminders will be posted
-channel_id = "C01..."  # Replace with your channel ID
+channel_id = "C04AR90JPED"  # Replace with your channel ID
 
 def send_reminder():
     global current_index

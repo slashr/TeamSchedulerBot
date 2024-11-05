@@ -1,63 +1,75 @@
 # app.py
 import os
 import time
-from slack_bolt import App
-from slack_bolt.adapter.flask import SlackRequestHandler
-from slack_sdk.web import WebClient
-from flask import Flask, request
 import threading
 import schedule
-
-# Load environment variables from .env file (if using dotenv)
+from flask import Flask, request
+from slack_bolt import App as SlackBoltApp
+from slack_bolt.adapter.flask import SlackRequestHandler
+from slack_sdk.web import WebClient
 from dotenv import load_dotenv
+import logging
+
 load_dotenv()
 
-# Initialize the Flask app
-flask_app = Flask(__name__)
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
 
-# Initialize the Slack app with your bot token and signing secret
-app = App(
+# Initialize the Slack Bolt app
+bolt_app = SlackBoltApp(
     token=os.environ.get("SLACK_BOT_TOKEN"),
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET")
 )
 
+# Initialize the Flask app
+app = Flask(__name__)
+
+# Create the Slack request handler
+handler = SlackRequestHandler(bolt_app)
+
 # List of team members' Slack user IDs
 team_members = [
-    "U07GAGKL6SY",  # User 1
-    "U04JZU760AD",  # User 2
-    "U06Q83GFMNW",  # User 3
-    "U07H9H7L7K8",  # User 4
-    "U041EHKCD3K",  # User 5
-    "U062AK6DQP9",  # User 6
+    "U01...",  # User 1
+    "U02...",  # User 2
+    "U03...",  # User 3
+    "U04...",  # User 4
+    "U05...",  # User 5
+    "U06...",  # User 6
 ]
 
 # Index to keep track of the current person responsible
 current_index = 0
 
 # Channel where the reminders will be posted
-channel_id = "C04AR90JPED"  # Replace with your channel ID
+channel_id = "C01..."  # Replace with your channel ID
 
 def send_reminder():
     global current_index
     user_id = team_members[current_index]
     client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
-    # Message with a Skip button
+    # Message with a Skip button using Block Kit
     client.chat_postMessage(
         channel=channel_id,
         text=f"<@{user_id}> is responsible for today's task.",
-        attachments=[
+        blocks=[
             {
-                "text": "If you're unavailable, you can skip to the next person.",
-                "fallback": "You are unable to skip",
-                "callback_id": "skip_responsibility",
-                "color": "#3AA3E3",
-                "attachment_type": "default",
-                "actions": [
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"<@{user_id}> is responsible for today's task."
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
                     {
-                        "name": "skip",
-                        "text": "Skip",
                         "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Skip"
+                        },
+                        "action_id": "skip_action",
                         "value": "skip"
                     }
                 ]
@@ -81,30 +93,32 @@ def run_schedule():
 threading.Thread(target=run_schedule).start()
 
 # Handle the Skip button action
-@app.action("skip")
-def handle_skip(ack, body, client):
-    global current_index
+@bolt_app.action("skip_action")
+def handle_skip_action(ack, body, client, logger):
     ack()
+
+    global current_index
 
     # Move to the next person
     current_index = (current_index + 1) % len(team_members)
     next_user_id = team_members[current_index]
 
-    # Update the message to mention the next person
-    client.chat_update(
-        channel=body["channel"]["id"],
-        ts=body["message"]["ts"],
-        text=f"<@{next_user_id}> is now responsible for today's task.",
-        attachments=[]  # Remove the attachments (buttons)
-    )
+    # Update the original message to mention the next person
+    try:
+        client.chat_update(
+            channel=body["channel"]["id"],
+            ts=body["message"]["ts"],
+            text=f"<@{next_user_id}> is now responsible for today's task.",
+            blocks=[]  # Remove the blocks to remove the button
+        )
+    except Exception as e:
+        logger.error(f"Failed to update message: {e}")
 
 # Flask route to handle Slack requests
-@flask_app.route("/slack/events", methods=["POST"])
+@app.route("/slack/events", methods=["POST"])
 def slack_events():
-    handler = SlackRequestHandler(app)
     return handler.handle(request)
 
 if __name__ == "__main__":
-    # Run the Flask app
-    flask_app.run(host="0.0.0.0", port=3000)
+    app.run(host="0.0.0.0", port=3000)
 

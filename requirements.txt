@@ -1,0 +1,7 @@
+# requirements.txt
+Flask==2.2.5
+slack_bolt==1.17.0
+slack_sdk==3.20.2
+schedule==1.1.0
+python-dotenv==1.0.0
+

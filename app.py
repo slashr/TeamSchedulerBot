@@ -49,7 +49,7 @@ def get_message_blocks(user_id):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"<@{user_id}> is responsible for today's task."
+                "text": f"<@{user_id}> is responsible for #devops_support today."
             }
         },
         {

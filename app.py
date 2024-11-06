@@ -43,13 +43,13 @@ current_index = 0
 # Channel where the reminders will be posted
 channel_id = "C06T98W9VQQ"  # Replace with your channel ID
 
-def get_message_blocks(user_id):
+def get_message_blocks(message_text):
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"<@{user_id}> is responsible for #devops_support today."
+                "text": message_text
             }
         },
         {
@@ -73,11 +73,13 @@ def send_reminder():
     user_id = team_members[current_index]
     client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
+    message_text = f"<@{user_id}> is responsible for #devops_support today."
+
     # Message with a Skip button using Block Kit
     client.chat_postMessage(
         channel=channel_id,
-        text=f"<@{user_id}> is responsible for #devops_support today",
-        blocks=get_message_blocks(user_id)
+        text=message_text,
+        blocks=get_message_blocks(message_text)
     )
 
 # Schedule the send_reminder function to run every weekday at 9:00 AM
@@ -109,13 +111,16 @@ def handle_skip_action(ack, body, client, logger):
     current_index = (current_index + 1) % len(team_members)
     next_user_id = team_members[current_index]
 
+    # Create the updated message text
+    message_text = f"<@{current_user_id}> is unavailable. <@{next_user_id}> is now responsible for #devops_support today."
+
     # Update the original message to indicate skipping
     try:
         client.chat_update(
             channel=body["channel"]["id"],
             ts=body["message"]["ts"],
-            text=f"<@{current_user_id}> is unavailable. <@{next_user_id}> is now responsible for #devops_support today",
-            blocks=get_message_blocks(next_user_id)
+            text=message_text,
+            blocks=get_message_blocks(message_text)
         )
     except Exception as e:
         logger.error(f"Failed to update message: {e}")

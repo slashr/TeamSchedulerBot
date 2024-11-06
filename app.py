@@ -43,7 +43,7 @@ current_index = 0
 # Channel where the reminders will be posted
 channel_id = "C06T98W9VQQ"  # Replace with your channel ID
 
-def get_message_blocks(message_text):
+def get_message_blocks(message_text, assigned_user_id):
     return [
         {
             "type": "section",
@@ -59,8 +59,19 @@ def get_message_blocks(message_text):
                     "type": "button",
                     "text": {
                         "type": "plain_text",
+                        "text": "Confirm"
+                    },
+                    "style": "primary",
+                    "action_id": "confirm_action",
+                    "value": assigned_user_id  # Pass the assigned user's ID here
+                },
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
                         "text": "Skip"
                     },
+                    "style": "danger",
                     "action_id": "skip_action",
                     "value": "skip"
                 }
@@ -75,11 +86,11 @@ def send_reminder():
 
     message_text = f"<@{user_id}> is responsible for #devops_support today."
 
-    # Message with a Skip button using Block Kit
+    # Message with Confirm and Skip buttons
     client.chat_postMessage(
         channel=channel_id,
         text=message_text,
-        blocks=get_message_blocks(message_text)
+        blocks=get_message_blocks(message_text, user_id)
     )
 
 # Schedule the send_reminder function to run every weekday at 9:00 AM
@@ -96,6 +107,46 @@ def run_schedule():
 
 # Start the scheduler in a separate thread
 threading.Thread(target=run_schedule).start()
+
+# Handle the Confirm button action
+@bolt_app.action("confirm_action")
+def handle_confirm_action(ack, body, client, logger):
+    ack()
+
+    user_id_clicked = body["user"]["id"]
+    assigned_user_id = body["actions"][0]["value"]  # The assigned user's ID from the button value
+
+    if user_id_clicked == assigned_user_id:
+        # Update the message to indicate confirmation
+        try:
+            message_text = f"<@{user_id_clicked}> has confirmed #devops_support for today :meow_salute:"
+
+            client.chat_update(
+                channel=body["channel"]["id"],
+                ts=body["message"]["ts"],
+                text=message_text,
+                blocks=[
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": message_text
+                        }
+                    }
+                ]
+            )
+        except Exception as e:
+            logger.error(f"Failed to update message: {e}")
+    else:
+        # Send an ephemeral message to the user who tried to confirm
+        try:
+            client.chat_postEphemeral(
+                channel=body["channel"]["id"],
+                user=user_id_clicked,
+                text="Sorry, only the assigned user can confirm this task."
+            )
+        except Exception as e:
+            logger.error(f"Failed to send ephemeral message: {e}")
 
 # Handle the Skip button action
 @bolt_app.action("skip_action")
@@ -120,7 +171,7 @@ def handle_skip_action(ack, body, client, logger):
             channel=body["channel"]["id"],
             ts=body["message"]["ts"],
             text=message_text,
-            blocks=get_message_blocks(message_text)
+            blocks=get_message_blocks(message_text, next_user_id)
         )
     except Exception as e:
         logger.error(f"Failed to update message: {e}")

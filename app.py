@@ -47,7 +47,7 @@ STATE_FILE = 'rotation_state.json'
 state_lock = Lock()
 
 # Channel where the reminders will be posted
-channel_id = "C06T98W9VQQ"  # Replace with your channel ID
+channel_id = "C04AR90JPED"  # Replace with your channel ID
 
 def get_message_blocks(message_text, assigned_user_id):
     return [
@@ -122,6 +122,16 @@ def send_reminder():
 
     except Exception as e:
         logger.error(f"Error in send_reminder: {e}")
+
+
+# Initialize the scheduler
+scheduler = BackgroundScheduler(
+    executors={'default': ThreadPoolExecutor(1)},
+    timezone=utc
+)
+
+# Schedule the send_reminder function to run every 1 minute for testing
+scheduler.add_job(send_reminder, 'cron', day_of_week='mon-fri', hour=8, minute=0)
 
 # Handle the Confirm button action
 @bolt_app.action("confirm_action")

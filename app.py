@@ -47,7 +47,7 @@ STATE_FILE = 'rotation_state.json'
 state_lock = Lock()
 
 # Channel where the reminders will be posted
-channel_id = "C04AR90JPED"  # Replace with your channel ID
+channel_id = "C087GGL7EMT"  # Replace with your channel ID
 
 def get_message_blocks(message_text, assigned_user_id):
     return [

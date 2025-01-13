@@ -34,12 +34,12 @@ handler = SlackRequestHandler(bolt_app)
 
 # List of team members' Slack user IDs
 team_members = [
-    "U07GAGKL6SY",  # User 1
-    "U04JZU760AD",  # User 2
-    "U06Q83GFMNW",  # User 3
-    "U07H9H7L7K8",  # User 4
-    "U041EHKCD3K",  # User 5
-    "U062AK6DQP9",  # User 6
+    "U07GAGKL6SY",  # Damian
+    "U04JZU760AD",  # Sopio
+    "U06Q83GFMNW",  # Phil
+    "U07H9H7L7K8",  # Rafa
+    "U041EHKCD3K",  # Martin
+    "U062AK6DQP9",  # Akash
 ]
 
 # File to store the current index

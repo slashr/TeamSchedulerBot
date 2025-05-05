@@ -121,11 +121,11 @@ def send_reminder():
 
 scheduler = BackgroundScheduler(
     executors={"default": ThreadPoolExecutor(max_workers=1)},
-    timezone=utc,
+    timezone="Europe/Berlin",
 )
 
 #Main schedule
-scheduler.add_job(send_reminder, "cron", minute=0, hour=8, day_of_week='mon-fri')
+scheduler.add_job(send_reminder, "cron", minute=0, hour=9, day_of_week='mon-fri')
 
 #Test schedule
 #scheduler.add_job(send_reminder, "cron", minute="*")

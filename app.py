@@ -1,7 +1,9 @@
 import os
 import json
 import logging
-from flask import Flask, request
+import sys
+from typing import List, Dict, Any
+from flask import Flask, request, Response
 from slack_bolt import App as SlackBoltApp
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk.web import WebClient
@@ -16,7 +18,11 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -54,8 +60,17 @@ state_lock = Lock()
 # Helpers
 # ---------------------------------------------------------------------------
 
-def get_message_blocks(text: str, assigned_user_id: str):
-    """Slack Block Kit blocks with Confirm/Skip actions."""
+def get_message_blocks(text: str, assigned_user_id: str) -> List[Dict[str, Any]]:
+    """
+    Build Slack Block Kit blocks with Confirm/Skip action buttons.
+    
+    Args:
+        text: The message text to display
+        assigned_user_id: The Slack user ID of the assigned person
+        
+    Returns:
+        List of Slack Block Kit block dictionaries
+    """
     return [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
         {
@@ -81,6 +96,12 @@ def get_message_blocks(text: str, assigned_user_id: str):
 
 
 def load_state() -> int:
+    """
+    Load the current rotation index from persistent state file.
+    
+    Returns:
+        The current rotation index (0-based)
+    """
     with state_lock:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as fp:
@@ -88,36 +109,56 @@ def load_state() -> int:
         return 0
 
 
-def save_state(idx: int):
+def save_state(idx: int) -> None:
+    """
+    Save the rotation index to persistent state file.
+    
+    Args:
+        idx: The rotation index to save
+    """
     with state_lock:
         with open(STATE_FILE, "w") as fp:
             json.dump({"current_index": idx}, fp)
 
 
 def advance_rotation() -> int:
+    """
+    Advance to the next person in the rotation.
+    
+    Returns:
+        The new rotation index
+    """
     idx = load_state()
     next_idx = (idx + 1) % len(team_members)
     save_state(next_idx)
+    logger.info("Rotation advanced from index %d to %d", idx, next_idx)
     return next_idx
 
 # ---------------------------------------------------------------------------
 # Reminder job (APS)
 # ---------------------------------------------------------------------------
 
-def send_reminder():
+def send_reminder() -> None:
+    """
+    Send the daily reminder message to the Slack channel with the assigned user.
+    This function is called by the scheduler.
+    """
     try:
         idx = load_state()
         user_id = team_members[idx]
         client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
         text = f"<@{user_id}> is responsible for #devops_support today."
+        
+        logger.info("Sending reminder to user %s (index %d)", user_id, idx)
+        
         client.chat_postMessage(
             channel=CHANNEL_ID,
             text=text,
             blocks=get_message_blocks(text, user_id),
         )
-        logger.info("Sent reminder to %s", user_id)
+        logger.info("Successfully sent reminder to %s", user_id)
     except Exception as exc:
-        logger.error("send_reminder error: %s", exc)
+        logger.error("Failed to send reminder: %s", exc, exc_info=True)
 
 scheduler = BackgroundScheduler(
     executors={"default": ThreadPoolExecutor(max_workers=1)},
@@ -134,11 +175,16 @@ scheduler.add_job(send_reminder, "cron", minute=0, hour=9, day_of_week='mon-fri'
 # Action handlers
 # ---------------------------------------------------------------------------
 @bolt_app.action("confirm_action")
-def handle_confirm(ack, body, client, logger):
+def handle_confirm(ack, body, client, logger) -> None:
+    """
+    Handle the Confirm button action.
+    Only the assigned user can confirm their assignment.
+    """
     ack()
     try:
         user_clicked = body["user"]["id"]
         assigned = body["actions"][0]["value"]
+        
         if user_clicked == assigned:
             msg = f"<@{user_clicked}> has confirmed #devops_support for today :meow_salute:"
             client.chat_update(
@@ -147,26 +193,36 @@ def handle_confirm(ack, body, client, logger):
                 text=msg,
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": msg}}],
             )
-            logger.info("%s confirmed.", user_clicked)
+            logger.info("User %s confirmed assignment", user_clicked)
             advance_rotation()
         else:
+            logger.warning(
+                "User %s attempted to confirm assignment meant for %s",
+                user_clicked,
+                assigned
+            )
             client.chat_postEphemeral(
                 channel=body["channel"]["id"],
                 user=user_clicked,
                 text="Sorry, only the assigned user can confirm this task.",
             )
     except Exception as exc:
-        logger.error("confirm_action error: %s", exc)
+        logger.error("Error handling confirm action: %s", exc, exc_info=True)
 
 
 @bolt_app.action("skip_action")
-def handle_skip(ack, body, client, logger):
+def handle_skip(ack, body, client, logger) -> None:
+    """
+    Handle the Skip button action.
+    Advances rotation to the next person and updates the message.
+    """
     ack()
     try:
         idx = load_state()
         current_user = team_members[idx]
         next_idx = advance_rotation()
         next_user = team_members[next_idx]
+        
         msg = (
             f"<@{current_user}> is unavailable. <@{next_user}> is now responsible for #devops_support today."
         )
@@ -176,21 +232,35 @@ def handle_skip(ack, body, client, logger):
             text=msg,
             blocks=get_message_blocks(msg, next_user),
         )
-        logger.info("%s skipped; reassigned to %s", current_user, next_user)
+        logger.info("User %s skipped; reassigned to %s", current_user, next_user)
     except Exception as exc:
-        logger.error("skip_action error: %s", exc)
+        logger.error("Error handling skip action: %s", exc, exc_info=True)
 
 # ---------------------------------------------------------------------------
 # Flask endpoint
 # ---------------------------------------------------------------------------
 @app.route("/slack/events", methods=["POST"])
-def slack_events():
+def slack_events() -> Response:
+    """
+    Main Flask endpoint for handling Slack events.
+    
+    Returns:
+        Flask Response object from the Slack handler
+    """
     return handler.handle(request)
 
 # ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    logger.info("Starting TeamSchedulerBot...")
+    logger.info("Team members: %d", len(team_members))
+    logger.info("Channel ID: %s", CHANNEL_ID)
+    logger.info("Scheduler timezone: Europe/Berlin")
+    
     scheduler.start()
+    logger.info("Scheduler started successfully")
+    
+    logger.info("Starting Flask app on 0.0.0.0:3000")
     app.run(host="0.0.0.0", port=3000)
 

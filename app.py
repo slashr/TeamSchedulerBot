@@ -2,8 +2,7 @@ import os
 import json
 import logging
 import sys
-from typing import List, Dict, Any
-from flask import Flask, request, Response
+from flask import Flask, request
 from slack_bolt import App as SlackBoltApp
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk.web import WebClient
@@ -26,14 +25,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Slack Bolt / Flask setup
+# Configuration Validation
 # ---------------------------------------------------------------------------
-bolt_app = SlackBoltApp(
-    token=os.environ.get("SLACK_BOT_TOKEN"),
-    signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
-)
-app = Flask(__name__)
-handler = SlackRequestHandler(bolt_app)
+def validate_environment() -> None:
+    """
+    Validate that all required environment variables are set.
+    Exits with error code 1 if any required variables are missing.
+    """
+    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"]
+    missing = [var for var in required_vars if not os.environ.get(var)]
+    
+    if missing:
+        logger.error("Missing required environment variables: %s", ", ".join(missing))
+        logger.error("Please set these variables in your .env file or environment")
+        sys.exit(1)
+    
+    logger.info("Environment validation passed")
+
+# Validate environment before initializing any services
+validate_environment()
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -47,14 +57,26 @@ team_members = [
     "U062AK6DQP9",  # Akash
 ]
 
-CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL", "C087GGL7EMT") #main channel
-#CHANNEL_ID = "C06T98W9VQQ" #test channel
+CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL", "C087GGL7EMT")
+REMINDER_HOUR = int(os.getenv("REMINDER_HOUR", "9"))
+REMINDER_MINUTE = int(os.getenv("REMINDER_MINUTE", "0"))
+REMINDER_TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Europe/Berlin")
 
 # Persistent state location (backed by a PVC in Kubernetes)
 STATE_DIR = os.getenv("STATE_DIR", "./state")
 os.makedirs(STATE_DIR, exist_ok=True)
 STATE_FILE = os.path.join(STATE_DIR, "rotation_state.json")
 state_lock = Lock()
+
+# ---------------------------------------------------------------------------
+# Slack Bolt / Flask setup
+# ---------------------------------------------------------------------------
+bolt_app = SlackBoltApp(
+    token=os.environ.get("SLACK_BOT_TOKEN"),
+    signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
+)
+app = Flask(__name__)
+handler = SlackRequestHandler(bolt_app)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,11 +184,17 @@ def send_reminder() -> None:
 
 scheduler = BackgroundScheduler(
     executors={"default": ThreadPoolExecutor(max_workers=1)},
-    timezone="Europe/Berlin",
+    timezone=REMINDER_TIMEZONE,
 )
 
-#Main schedule
-scheduler.add_job(send_reminder, "cron", minute=0, hour=9, day_of_week='mon-fri')
+# Schedule daily reminder (configurable via environment variables)
+scheduler.add_job(
+    send_reminder,
+    "cron",
+    minute=REMINDER_MINUTE,
+    hour=REMINDER_HOUR,
+    day_of_week='mon-fri'
+)
 
 #Test schedule
 #scheduler.add_job(send_reminder, "cron", minute="*")
@@ -253,10 +281,12 @@ def slack_events() -> Response:
 # Main entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    logger.info("Starting TeamSchedulerBot...")
+    logger.info("=== TeamSchedulerBot Configuration ===")
     logger.info("Team members: %d", len(team_members))
     logger.info("Channel ID: %s", CHANNEL_ID)
-    logger.info("Scheduler timezone: Europe/Berlin")
+    logger.info("Reminder schedule: %02d:%02d %s (Mon-Fri)", REMINDER_HOUR, REMINDER_MINUTE, REMINDER_TIMEZONE)
+    logger.info("State directory: %s", STATE_DIR)
+    logger.info("=====================================")
     
     scheduler.start()
     logger.info("Scheduler started successfully")

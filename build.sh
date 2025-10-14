@@ -9,6 +9,6 @@ fi
 IMAGE_TAG=$1
 
 docker build . -t slack-bot:latest --platform linux/amd64 && \
-docker tag slack-bot:latest 641817342265.dkr.ecr.eu-central-1.amazonaws.com/team-scheduler-bot:v${IMAGE_TAG} && \
-docker push 641817342265.dkr.ecr.eu-central-1.amazonaws.com/team-scheduler-bot:v${IMAGE_TAG}
+docker tag slack-bot:latest 662579086644.dkr.ecr.us-east-1.amazonaws.com/team-scheduler-bot:v${IMAGE_TAG} && \
+docker push 662579086644.dkr.ecr.us-east-1.amazonaws.com/team-scheduler-bot:v${IMAGE_TAG}
 

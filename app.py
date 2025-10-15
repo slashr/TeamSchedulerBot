@@ -2,7 +2,8 @@ import os
 import json
 import logging
 import sys
-from flask import Flask, request
+from typing import List, Dict, Any
+from flask import Flask, request, Response
 from slack_bolt import App as SlackBoltApp
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk.web import WebClient

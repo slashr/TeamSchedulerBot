@@ -86,6 +86,7 @@ except Exception as exc:  # Fall back to local path if PVC is unavailable
 
 STATE_FILE = os.path.join(STATE_DIR, "rotation_state.json")
 state_lock = Lock()
+state_loaded = False
 
 # ---------------------------------------------------------------------------
 # Slack Bolt / Flask setup
@@ -156,6 +157,7 @@ def _write_state_locked(idx: int) -> None:
 
 def get_team_members() -> List[str]:
     """Thread-safe accessor for team_members."""
+    ensure_state_loaded()
     with state_lock:
         return list(team_members)
 
@@ -167,6 +169,8 @@ def load_state() -> int:
     Returns:
         The current rotation index (0-based)
     """
+    global state_loaded
+
     with state_lock:
         if not team_members:
             logger.warning("No team members configured; defaulting rotation index to 0")
@@ -188,6 +192,7 @@ def load_state() -> int:
             idx = 0
             _write_state_locked(idx)
 
+        state_loaded = True
         return idx
 
 
@@ -231,6 +236,8 @@ def update_team_members(new_members: List[str], removed_index: Optional[int] = N
     Returns:
         The persisted rotation index after adjustment
     """
+    ensure_state_loaded()
+
     cleaned: List[str] = []
     seen = set()
     for user_id in new_members:
@@ -264,6 +271,14 @@ def extract_user_id(raw: str) -> str:
     if cleaned.startswith("<@") and cleaned.endswith(">"):
         cleaned = cleaned[2:-1]
     return cleaned
+
+
+def ensure_state_loaded() -> None:
+    """Ensure state (including roster) is loaded once per process."""
+    global state_loaded
+    if state_loaded:
+        return
+    load_state()
 
 # ---------------------------------------------------------------------------
 # Reminder job (APS)

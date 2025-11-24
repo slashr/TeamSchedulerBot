@@ -17,5 +17,4 @@ COPY . .
 EXPOSE 3000
 
 # Start the application
-CMD ["python", "app.py"]
-
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

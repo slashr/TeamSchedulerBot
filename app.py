@@ -391,10 +391,15 @@ def start_scheduler_once() -> None:
 
 def shutdown_scheduler(signum, frame) -> None:
     """Handle termination signals for graceful shutdown."""
+    stop_scheduler(reason=f"signal {signum}")
+
+
+def stop_scheduler(reason: str = "shutdown") -> None:
+    """Stop the scheduler if running."""
     global _scheduler_started
     if not _scheduler_started:
         return
-    logger.info("Signal %s received; shutting down scheduler", signum)
+    logger.info("Stopping scheduler (%s)", reason)
     try:
         scheduler.shutdown(wait=False)
     except Exception as exc:

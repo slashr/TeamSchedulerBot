@@ -259,7 +259,14 @@ def update_team_members(new_members: List[str], removed_index: Optional[int] = N
     with state_lock:
         global team_members
         data = _read_state_locked()
-        current_idx = int(data.get("current_index", 0))
+        try:
+            current_idx = int(data.get("current_index", 0))
+        except (TypeError, ValueError):
+            logger.warning(
+                "State index %s is invalid during roster update; resetting to 0",
+                data.get("current_index"),
+            )
+            current_idx = 0
 
         if removed_index is not None and removed_index < current_idx:
             current_idx -= 1

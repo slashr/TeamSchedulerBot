@@ -2,11 +2,13 @@ import os
 import json
 import logging
 import sys
+import time
 from typing import List, Dict, Any, Optional
 from flask import Flask, request, Response
 from slack_bolt import App as SlackBoltApp
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk.web import WebClient
+from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor
@@ -296,6 +298,49 @@ def ensure_state_loaded() -> None:
         return
     load_state()
 
+
+def slack_api_call(func, logger, max_attempts: int = 3, **kwargs):
+    """Call a Slack Web API function with basic retry/backoff."""
+    backoff = 1
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return func(**kwargs)
+        except SlackApiError as exc:
+            last_exc = exc
+            status = getattr(exc.response, "status_code", None)
+            retry_after = None
+            if getattr(exc, "response", None) and exc.response.headers:
+                retry_after = exc.response.headers.get("Retry-After")
+            logger.warning(
+                "Slack API error (attempt %d/%d): %s (status=%s retry_after=%s)",
+                attempt,
+                max_attempts,
+                exc.response.get("error") if exc.response else exc,
+                status,
+                retry_after,
+            )
+            if status == 429 and retry_after:
+                time.sleep(int(retry_after))
+                if attempt < max_attempts:
+                    continue
+            if status and status >= 500 and attempt < max_attempts:
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Slack call failed (attempt %d/%d): %s", attempt, max_attempts, exc
+            )
+            if attempt < max_attempts:
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+
 # ---------------------------------------------------------------------------
 # Reminder job (APS)
 # ---------------------------------------------------------------------------
@@ -319,12 +364,16 @@ def send_reminder() -> None:
         
         logger.info("Sending reminder to user %s (index %d)", user_id, idx)
         
-        client.chat_postMessage(
+        slack_api_call(
+            client.chat_postMessage,
+            logger,
             channel=CHANNEL_ID,
             text=text,
             blocks=get_message_blocks(text, user_id),
         )
         logger.info("Successfully sent reminder to %s", user_id)
+    except SlackApiError as exc:
+        logger.error("Slack API error sending reminder: %s", exc, exc_info=True)
     except Exception as exc:
         logger.error("Failed to send reminder: %s", exc, exc_info=True)
 
@@ -402,7 +451,9 @@ def handle_confirm(ack, body, client, logger) -> None:
         
         if user_clicked == assigned:
             msg = f"<@{user_clicked}> has confirmed #devops_support for today :meow_salute:"
-            client.chat_update(
+            slack_api_call(
+                client.chat_update,
+                logger,
                 channel=body["channel"]["id"],
                 ts=body["message"]["ts"],
                 text=msg,
@@ -416,11 +467,15 @@ def handle_confirm(ack, body, client, logger) -> None:
                 user_clicked,
                 assigned
             )
-            client.chat_postEphemeral(
+            slack_api_call(
+                client.chat_postEphemeral,
+                logger,
                 channel=body["channel"]["id"],
                 user=user_clicked,
                 text="Sorry, only the assigned user can confirm this task.",
             )
+    except SlackApiError as exc:
+        logger.error("Slack API error handling confirm action: %s", exc, exc_info=True)
     except Exception as exc:
         logger.error("Error handling confirm action: %s", exc, exc_info=True)
 
@@ -448,13 +503,17 @@ def handle_skip(ack, body, client, logger) -> None:
         msg = (
             f"<@{current_user}> is unavailable. <@{next_user}> is now responsible for #devops_support today."
         )
-        client.chat_update(
+        slack_api_call(
+            client.chat_update,
+            logger,
             channel=body["channel"]["id"],
             ts=body["message"]["ts"],
             text=msg,
             blocks=get_message_blocks(msg, next_user),
         )
         logger.info("User %s skipped; reassigned to %s", current_user, next_user)
+    except SlackApiError as exc:
+        logger.error("Slack API error handling skip action: %s", exc, exc_info=True)
     except Exception as exc:
         logger.error("Error handling skip action: %s", exc, exc_info=True)
 

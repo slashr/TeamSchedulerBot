@@ -559,8 +559,11 @@ def ready() -> Response:
     members = get_team_members()
     if not members:
         return Response("no team members configured", status=503, mimetype="text/plain")
-    if not _scheduler_started:
+    scheduler_expected = should_start_scheduler()
+    if scheduler_expected and not _scheduler_started:
         return Response("scheduler not started", status=503, mimetype="text/plain")
+    if not scheduler_expected and not _scheduler_started:
+        return Response("ready (scheduler disabled)", status=200, mimetype="text/plain")
     return Response("ready", status=200, mimetype="text/plain")
 
 

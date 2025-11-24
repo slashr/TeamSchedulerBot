@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import signal
+import tempfile
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from flask import Flask, request, Response
@@ -155,8 +156,20 @@ def _read_state_locked() -> Dict[str, Any]:
 
 def _write_state_locked(idx: int) -> None:
     """Persist rotation index and current team members. Caller must hold state_lock."""
-    with open(STATE_FILE, "w") as fp:
-        json.dump({"current_index": idx, "team_members": team_members}, fp)
+    data = {"current_index": idx, "team_members": team_members}
+    fd, tmp_path = tempfile.mkstemp(prefix="rotation_state_", dir=STATE_DIR)
+    try:
+        with os.fdopen(fd, "w") as fp:
+            json.dump(data, fp)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tmp_path, STATE_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        raise
 
 
 def get_team_members(force_reload: bool = False) -> List[str]:

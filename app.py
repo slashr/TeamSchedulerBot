@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import sys
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from flask import Flask, request, Response
 from slack_bolt import App as SlackBoltApp
 from slack_bolt.adapter.flask import SlackRequestHandler
@@ -49,7 +49,7 @@ validate_environment()
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-team_members = [
+DEFAULT_TEAM_MEMBERS = [
     "U07GAGKL6SY",  # Damian
     "U04JZU760AD",  # Sopio
     "U06Q83GFMNW",  # Phil
@@ -57,6 +57,18 @@ team_members = [
     "U041EHKCD3K",  # Martin
     "U062AK6DQP9",  # Akash
 ]
+
+
+def parse_team_members_env() -> List[str]:
+    """Parse TEAM_MEMBERS env var (comma-separated Slack user IDs)."""
+    raw = os.getenv("TEAM_MEMBERS", "")
+    if not raw:
+        return []
+    members = [member.strip() for member in raw.split(",") if member.strip()]
+    return members
+
+
+team_members: List[str] = parse_team_members_env() or DEFAULT_TEAM_MEMBERS
 
 CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL", "C087GGL7EMT")
 REMINDER_HOUR = int(os.getenv("REMINDER_HOUR", "9"))
@@ -74,6 +86,7 @@ except Exception as exc:  # Fall back to local path if PVC is unavailable
 
 STATE_FILE = os.path.join(STATE_DIR, "rotation_state.json")
 state_lock = Lock()
+state_loaded = False
 
 # ---------------------------------------------------------------------------
 # Slack Bolt / Flask setup
@@ -124,6 +137,32 @@ def get_message_blocks(text: str, assigned_user_id: str) -> List[Dict[str, Any]]
     ]
 
 
+def _read_state_locked() -> Dict[str, Any]:
+    """Read state file contents. Caller must hold state_lock."""
+    if not os.path.exists(STATE_FILE):
+        return {}
+    try:
+        with open(STATE_FILE, "r") as fp:
+            return json.load(fp)
+    except (ValueError, json.JSONDecodeError, OSError) as exc:
+        logger.warning("State file invalid; resetting rotation to defaults (%s)", exc)
+        return {}
+
+
+def _write_state_locked(idx: int) -> None:
+    """Persist rotation index and current team members. Caller must hold state_lock."""
+    with open(STATE_FILE, "w") as fp:
+        json.dump({"current_index": idx, "team_members": team_members}, fp)
+
+
+def get_team_members(force_reload: bool = False) -> List[str]:
+    """Thread-safe accessor for team_members, with optional refresh from disk."""
+    if force_reload or not state_loaded:
+        load_state()
+    with state_lock:
+        return list(team_members)
+
+
 def load_state() -> int:
     """
     Load the current rotation index from persistent state file.
@@ -131,21 +170,27 @@ def load_state() -> int:
     Returns:
         The current rotation index (0-based)
     """
-    if not team_members:
-        logger.warning("No team members configured; defaulting rotation index to 0")
-        return 0
+    global state_loaded
 
     with state_lock:
-        if not os.path.exists(STATE_FILE):
+        if not team_members:
+            logger.warning("No team members configured; defaulting rotation index to 0")
             return 0
 
+        data = _read_state_locked()
+        stored_members = data.get("team_members")
+        if stored_members:
+            team_members.clear()
+            team_members.extend(stored_members)
+
         try:
-            with open(STATE_FILE, "r") as fp:
-                data = json.load(fp)
             idx = int(data.get("current_index", 0))
-        except (ValueError, json.JSONDecodeError, OSError) as exc:
-            logger.warning("State file invalid; resetting rotation to 0 (%s)", exc)
-            return 0
+        except (TypeError, ValueError):
+            logger.warning(
+                "State index %s is invalid; resetting to 0", data.get("current_index")
+            )
+            idx = 0
+            _write_state_locked(idx)
 
         if idx < 0 or idx >= len(team_members):
             logger.warning(
@@ -153,8 +198,10 @@ def load_state() -> int:
                 idx,
                 len(team_members),
             )
-            return 0
+            idx = 0
+            _write_state_locked(idx)
 
+        state_loaded = True
         return idx
 
 
@@ -166,8 +213,7 @@ def save_state(idx: int) -> None:
         idx: The rotation index to save
     """
     with state_lock:
-        with open(STATE_FILE, "w") as fp:
-            json.dump({"current_index": idx}, fp)
+        _write_state_locked(idx)
 
 
 def advance_rotation() -> int:
@@ -177,15 +223,78 @@ def advance_rotation() -> int:
     Returns:
         The new rotation index
     """
-    if not team_members:
+    members = get_team_members(force_reload=True)
+    if not members:
         logger.error("Team members list is empty; cannot advance rotation")
         return 0
 
     idx = load_state()
-    next_idx = (idx + 1) % len(team_members)
+    next_idx = (idx + 1) % len(members)
     save_state(next_idx)
     logger.info("Rotation advanced from index %d to %d", idx, next_idx)
     return next_idx
+
+
+def update_team_members(new_members: List[str], removed_index: Optional[int] = None) -> int:
+    """
+    Replace the roster with a new list and persist state.
+    
+    Args:
+        new_members: new ordered list of Slack user IDs
+        removed_index: optional index that was removed (used to adjust pointer)
+    Returns:
+        The persisted rotation index after adjustment
+    """
+    ensure_state_loaded()
+
+    cleaned: List[str] = []
+    seen = set()
+    for user_id in new_members:
+        if user_id and user_id not in seen:
+            cleaned.append(user_id)
+            seen.add(user_id)
+
+    if not cleaned:
+        raise ValueError("Team members list cannot be empty")
+
+    with state_lock:
+        global team_members
+        data = _read_state_locked()
+        try:
+            current_idx = int(data.get("current_index", 0))
+        except (TypeError, ValueError):
+            logger.warning(
+                "State index %s is invalid during roster update; resetting to 0",
+                data.get("current_index"),
+            )
+            current_idx = 0
+
+        if removed_index is not None and removed_index < current_idx:
+            current_idx -= 1
+
+        if current_idx < 0 or current_idx >= len(cleaned):
+            current_idx = 0
+
+        team_members.clear()
+        team_members.extend(cleaned)
+        _write_state_locked(current_idx)
+        return current_idx
+
+
+def extract_user_id(raw: str) -> str:
+    """Strip Slack mention wrappers and whitespace."""
+    cleaned = raw.strip()
+    if cleaned.startswith("<@") and cleaned.endswith(">"):
+        cleaned = cleaned[2:-1]
+    return cleaned
+
+
+def ensure_state_loaded() -> None:
+    """Ensure state (including roster) is loaded once per process."""
+    global state_loaded
+    if state_loaded:
+        return
+    load_state()
 
 # ---------------------------------------------------------------------------
 # Reminder job (APS)
@@ -197,12 +306,14 @@ def send_reminder() -> None:
     This function is called by the scheduler.
     """
     try:
-        if not team_members:
+        members = get_team_members(force_reload=True)
+        if not members:
             logger.error("No team members configured; skipping reminder send")
             return
-
+    
         idx = load_state()
-        user_id = team_members[idx]
+        members = get_team_members()
+        user_id = members[idx]
         client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
         text = f"<@{user_id}> is responsible for #devops_support today."
         
@@ -322,14 +433,17 @@ def handle_skip(ack, body, client, logger) -> None:
     """
     ack()
     try:
-        if not team_members:
+        members = get_team_members(force_reload=True)
+        if not members:
             logger.error("No team members configured; cannot skip rotation")
             return
 
         idx = load_state()
-        current_user = team_members[idx]
+        members = get_team_members(force_reload=True)
+        current_user = members[idx]
         next_idx = advance_rotation()
-        next_user = team_members[next_idx]
+        members = get_team_members(force_reload=True)
+        next_user = members[next_idx]
         
         msg = (
             f"<@{current_user}> is unavailable. <@{next_user}> is now responsible for #devops_support today."
@@ -343,6 +457,76 @@ def handle_skip(ack, body, client, logger) -> None:
         logger.info("User %s skipped; reassigned to %s", current_user, next_user)
     except Exception as exc:
         logger.error("Error handling skip action: %s", exc, exc_info=True)
+
+# ---------------------------------------------------------------------------
+# Slash commands
+# ---------------------------------------------------------------------------
+@bolt_app.command("/rotation")
+def handle_rotation_command(ack, body, respond, logger) -> None:
+    """
+    Manage rotation roster via Slack slash command.
+    
+    Usage:
+      /rotation list
+      /rotation add <@user>
+      /rotation remove <@user>
+    """
+    ack()
+    try:
+        text = (body.get("text") or "").strip()
+        parts = text.split()
+        subcommand = parts[0].lower() if parts else "list"
+
+        if subcommand in ("list", "ls"):
+            idx = load_state()
+            members = get_team_members(force_reload=True)
+            if not members:
+                respond("No team members configured.")
+                return
+            lines = []
+            for i, user_id in enumerate(members, start=1):
+                marker = " (current)" if i - 1 == idx else ""
+                lines.append(f"{i}. <@{user_id}>{marker}")
+            respond("\n".join(lines))
+            return
+
+        if subcommand == "add":
+            if len(parts) < 2:
+                respond("Usage: /rotation add <@user>")
+                return
+            user_id = extract_user_id(parts[1])
+            members = get_team_members(force_reload=True)
+            if user_id in members:
+                respond(f"<@{user_id}> is already in the rotation.")
+                return
+            members.append(user_id)
+            update_team_members(members)
+            respond(f"Added <@{user_id}> to the rotation.")
+            return
+
+        if subcommand in ("remove", "rm", "delete"):
+            if len(parts) < 2:
+                respond("Usage: /rotation remove <@user>")
+                return
+            user_id = extract_user_id(parts[1])
+            members = get_team_members(force_reload=True)
+            if user_id not in members:
+                respond(f"<@{user_id}> is not in the rotation.")
+                return
+            removed_index = members.index(user_id)
+            members = [m for m in members if m != user_id]
+            try:
+                update_team_members(members, removed_index=removed_index)
+            except ValueError:
+                respond("Cannot remove the last member; rotation would be empty.")
+                return
+            respond(f"Removed <@{user_id}> from the rotation.")
+            return
+
+        respond("Unsupported subcommand. Try: list, add, remove.")
+    except Exception as exc:
+        logger.error("Error handling /rotation command: %s", exc, exc_info=True)
+        respond("Something went wrong handling that command.")
 
 # ---------------------------------------------------------------------------
 # Flask endpoint
@@ -361,8 +545,15 @@ def slack_events() -> Response:
 # Main entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Ensure roster is available; seed from state if present
+    current_idx = load_state()
+    save_state(current_idx)
+    if not get_team_members():
+        logger.error("No team members configured via TEAM_MEMBERS or defaults; exiting")
+        sys.exit(1)
+
     logger.info("=== TeamSchedulerBot Configuration ===")
-    logger.info("Team members: %d", len(team_members))
+    logger.info("Team members: %d", len(get_team_members()))
     logger.info("Channel ID: %s", CHANNEL_ID)
     logger.info("Reminder schedule: %02d:%02d %s (Mon-Fri)", REMINDER_HOUR, REMINDER_MINUTE, REMINDER_TIMEZONE)
     logger.info("State directory: %s", STATE_DIR)

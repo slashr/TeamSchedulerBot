@@ -15,7 +15,6 @@ from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor
-from pytz import utc
 from threading import Lock
 
 load_dotenv()

@@ -302,10 +302,12 @@ def ensure_state_loaded() -> None:
 def slack_api_call(func, logger, max_attempts: int = 3, **kwargs):
     """Call a Slack Web API function with basic retry/backoff."""
     backoff = 1
+    last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
             return func(**kwargs)
         except SlackApiError as exc:
+            last_exc = exc
             status = getattr(exc.response, "status_code", None)
             retry_after = None
             if getattr(exc, "response", None) and exc.response.headers:
@@ -320,7 +322,8 @@ def slack_api_call(func, logger, max_attempts: int = 3, **kwargs):
             )
             if status == 429 and retry_after:
                 time.sleep(int(retry_after))
-                continue
+                if attempt < max_attempts:
+                    continue
             if status and status >= 500 and attempt < max_attempts:
                 time.sleep(backoff)
                 backoff *= 2
@@ -335,6 +338,8 @@ def slack_api_call(func, logger, max_attempts: int = 3, **kwargs):
                 backoff *= 2
                 continue
             raise
+    if last_exc:
+        raise last_exc
 
 # ---------------------------------------------------------------------------
 # Reminder job (APS)

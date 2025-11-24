@@ -17,3 +17,6 @@ Slack bot that posts a daily rotation reminder with confirm/skip buttons.
 - Configure `/rotation` (requires the `commands` scope).
 - Usage: `/rotation list`, `/rotation add <@user>`, `/rotation remove <@user>`.
 - Roster changes are persisted to the rotation state file so they survive restarts.
+
+## Health
+- `/health` liveness, `/ready` readiness (requires roster + scheduler), `/metrics` basic text metrics.

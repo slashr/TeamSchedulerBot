@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import sys
+import time
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from flask import Flask, request, Response
 from slack_bolt import App as SlackBoltApp
@@ -324,6 +326,8 @@ def send_reminder() -> None:
             text=text,
             blocks=get_message_blocks(text, user_id),
         )
+        global last_reminder_at
+        last_reminder_at = datetime.utcnow().isoformat() + "Z"
         logger.info("Successfully sent reminder to %s", user_id)
     except Exception as exc:
         logger.error("Failed to send reminder: %s", exc, exc_info=True)
@@ -334,6 +338,7 @@ scheduler = BackgroundScheduler(
 )
 
 _scheduler_started = False
+last_reminder_at: Optional[str] = None
 
 # Schedule daily reminder (configurable via environment variables)
 scheduler.add_job(
@@ -540,6 +545,43 @@ def slack_events() -> Response:
         Flask Response object from the Slack handler
     """
     return handler.handle(request)
+
+
+@app.route("/health", methods=["GET"])
+def health() -> Response:
+    """Liveness probe."""
+    return Response("ok", status=200, mimetype="text/plain")
+
+
+@app.route("/ready", methods=["GET"])
+def ready() -> Response:
+    """Readiness probe: ensure roster exists and scheduler is started."""
+    members = get_team_members()
+    if not members:
+        return Response("no team members configured", status=503, mimetype="text/plain")
+    if not _scheduler_started:
+        return Response("scheduler not started", status=503, mimetype="text/plain")
+    return Response("ready", status=200, mimetype="text/plain")
+
+
+@app.route("/metrics", methods=["GET"])
+def metrics() -> Response:
+    """Minimal text metrics for scraping."""
+    try:
+        idx = load_state()
+        members = get_team_members()
+        content = "\n".join(
+            [
+                f"rotation_index {idx}",
+                f"team_members_count {len(members)}",
+                f"scheduler_started {int(_scheduler_started)}",
+                f"last_reminder_timestamp \"{last_reminder_at or ''}\"",
+            ]
+        )
+        return Response(content, status=200, mimetype="text/plain")
+    except Exception as exc:
+        logger.error("Error building metrics: %s", exc, exc_info=True)
+        return Response("error", status=500, mimetype="text/plain")
 
 # ---------------------------------------------------------------------------
 # Main entrypoint

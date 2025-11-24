@@ -336,7 +336,7 @@ scheduler = BackgroundScheduler(
 
 _scheduler_started = False
 _shutdown_registered = False
-_prev_handlers: Dict[int, Optional[signal.Handlers]] = {}
+_prev_handlers: Dict[int, Optional[Any]] = {}
 
 # Schedule daily reminder (configurable via environment variables)
 scheduler.add_job(

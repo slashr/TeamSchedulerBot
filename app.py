@@ -64,8 +64,14 @@ REMINDER_MINUTE = int(os.getenv("REMINDER_MINUTE", "0"))
 REMINDER_TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Europe/Berlin")
 
 # Persistent state location (backed by a PVC in Kubernetes)
-STATE_DIR = os.getenv("STATE_DIR", "./state")
-os.makedirs(STATE_DIR, exist_ok=True)
+STATE_DIR = os.getenv("STATE_DIR", "/state")
+try:
+    os.makedirs(STATE_DIR, exist_ok=True)
+except Exception as exc:  # Fall back to local path if PVC is unavailable
+    logger.warning("Failed to create state dir '%s' (%s); falling back to ./state", STATE_DIR, exc)
+    STATE_DIR = "./state"
+    os.makedirs(STATE_DIR, exist_ok=True)
+
 STATE_FILE = os.path.join(STATE_DIR, "rotation_state.json")
 state_lock = Lock()
 
@@ -125,11 +131,31 @@ def load_state() -> int:
     Returns:
         The current rotation index (0-based)
     """
-    with state_lock:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r") as fp:
-                return json.load(fp).get("current_index", 0)
+    if not team_members:
+        logger.warning("No team members configured; defaulting rotation index to 0")
         return 0
+
+    with state_lock:
+        if not os.path.exists(STATE_FILE):
+            return 0
+
+        try:
+            with open(STATE_FILE, "r") as fp:
+                data = json.load(fp)
+            idx = int(data.get("current_index", 0))
+        except (ValueError, json.JSONDecodeError, OSError) as exc:
+            logger.warning("State file invalid; resetting rotation to 0 (%s)", exc)
+            return 0
+
+        if idx < 0 or idx >= len(team_members):
+            logger.warning(
+                "State index %s out of bounds for %d members; resetting to 0",
+                idx,
+                len(team_members),
+            )
+            return 0
+
+        return idx
 
 
 def save_state(idx: int) -> None:
@@ -151,6 +177,10 @@ def advance_rotation() -> int:
     Returns:
         The new rotation index
     """
+    if not team_members:
+        logger.error("Team members list is empty; cannot advance rotation")
+        return 0
+
     idx = load_state()
     next_idx = (idx + 1) % len(team_members)
     save_state(next_idx)
@@ -167,6 +197,10 @@ def send_reminder() -> None:
     This function is called by the scheduler.
     """
     try:
+        if not team_members:
+            logger.error("No team members configured; skipping reminder send")
+            return
+
         idx = load_state()
         user_id = team_members[idx]
         client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
@@ -247,6 +281,10 @@ def handle_skip(ack, body, client, logger) -> None:
     """
     ack()
     try:
+        if not team_members:
+            logger.error("No team members configured; cannot skip rotation")
+            return
+
         idx = load_state()
         current_user = team_members[idx]
         next_idx = advance_rotation()
@@ -294,4 +332,3 @@ if __name__ == "__main__":
     
     logger.info("Starting Flask app on 0.0.0.0:3000")
     app.run(host="0.0.0.0", port=3000)
-

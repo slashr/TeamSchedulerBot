@@ -155,9 +155,10 @@ def _write_state_locked(idx: int) -> None:
         json.dump({"current_index": idx, "team_members": team_members}, fp)
 
 
-def get_team_members() -> List[str]:
-    """Thread-safe accessor for team_members."""
-    ensure_state_loaded()
+def get_team_members(force_reload: bool = False) -> List[str]:
+    """Thread-safe accessor for team_members, with optional refresh from disk."""
+    if force_reload or not state_loaded:
+        load_state()
     with state_lock:
         return list(team_members)
 
@@ -221,7 +222,7 @@ def advance_rotation() -> int:
     Returns:
         The new rotation index
     """
-    members = get_team_members()
+    members = get_team_members(force_reload=True)
     if not members:
         logger.error("Team members list is empty; cannot advance rotation")
         return 0
@@ -297,7 +298,7 @@ def send_reminder() -> None:
     This function is called by the scheduler.
     """
     try:
-        members = get_team_members()
+        members = get_team_members(force_reload=True)
         if not members:
             logger.error("No team members configured; skipping reminder send")
             return
@@ -424,16 +425,16 @@ def handle_skip(ack, body, client, logger) -> None:
     """
     ack()
     try:
-        members = get_team_members()
+        members = get_team_members(force_reload=True)
         if not members:
             logger.error("No team members configured; cannot skip rotation")
             return
-    
+
         idx = load_state()
-        members = get_team_members()
+        members = get_team_members(force_reload=True)
         current_user = members[idx]
         next_idx = advance_rotation()
-        members = get_team_members()
+        members = get_team_members(force_reload=True)
         next_user = members[next_idx]
         
         msg = (
@@ -470,7 +471,7 @@ def handle_rotation_command(ack, body, respond, logger) -> None:
 
         if subcommand in ("list", "ls"):
             idx = load_state()
-            members = get_team_members()
+            members = get_team_members(force_reload=True)
             if not members:
                 respond("No team members configured.")
                 return
@@ -486,7 +487,7 @@ def handle_rotation_command(ack, body, respond, logger) -> None:
                 respond("Usage: /rotation add <@user>")
                 return
             user_id = extract_user_id(parts[1])
-            members = get_team_members()
+            members = get_team_members(force_reload=True)
             if user_id in members:
                 respond(f"<@{user_id}> is already in the rotation.")
                 return
@@ -500,7 +501,7 @@ def handle_rotation_command(ack, body, respond, logger) -> None:
                 respond("Usage: /rotation remove <@user>")
                 return
             user_id = extract_user_id(parts[1])
-            members = get_team_members()
+            members = get_team_members(force_reload=True)
             if user_id not in members:
                 respond(f"<@{user_id}> is not in the rotation.")
                 return

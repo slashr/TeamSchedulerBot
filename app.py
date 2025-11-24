@@ -575,12 +575,19 @@ def metrics() -> Response:
     try:
         idx = load_state()
         members = get_team_members()
+        ts = last_reminder_at
+        ts_numeric = ""
+        if ts:
+            try:
+                ts_numeric = str(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+            except Exception:
+                ts_numeric = ""
         content = "\n".join(
             [
                 f"rotation_index {idx}",
                 f"team_members_count {len(members)}",
                 f"scheduler_started {int(_scheduler_started)}",
-                f"last_reminder_timestamp \"{last_reminder_at or ''}\"",
+                f"last_reminder_timestamp {ts_numeric or 0}",
             ]
         )
         return Response(content, status=200, mimetype="text/plain")

@@ -14,16 +14,3 @@ def post_worker_init(worker):
     from app import start_scheduler_once
 
     start_scheduler_once()
-
-
-def worker_exit(worker, status):
-    """
-    Stop the scheduler on worker exit to avoid duplicate runs during restarts.
-    """
-    try:
-        from app import stop_scheduler
-
-        stop_scheduler(reason="worker_exit")
-    except Exception:
-        # Best effort; avoid crashing gunicorn shutdown.
-        pass

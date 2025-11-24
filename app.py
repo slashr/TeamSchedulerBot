@@ -392,6 +392,13 @@ def start_scheduler_once() -> None:
 def shutdown_scheduler(signum, frame) -> None:
     """Handle termination signals for graceful shutdown."""
     stop_scheduler(reason=f"signal {signum}")
+    # Chain to default so gunicorn workers exit promptly
+    try:
+        original = signal.getsignal(signum)
+        if original and original not in (shutdown_scheduler, signal.SIG_DFL, signal.SIG_IGN):
+            original(signum, frame)
+    except Exception:
+        pass
 
 
 def stop_scheduler(reason: str = "shutdown") -> None:

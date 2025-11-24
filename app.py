@@ -497,20 +497,6 @@ def register_signal_handlers() -> None:
     _shutdown_registered = True
 
 
-def shutdown_scheduler(signum, frame) -> None:
-    """Handle termination signals for graceful shutdown."""
-    stop_scheduler(reason=f"signal {signum}")
-    # Chain to previous handler so gunicorn workers exit promptly
-    prev = _prev_handlers.get(signum)
-    if prev and prev not in (shutdown_scheduler, signal.SIG_DFL, signal.SIG_IGN):
-        try:
-            prev(signum, frame)
-        except Exception:
-            pass
-    elif prev == signal.SIG_DFL:
-        raise SystemExit(0)
-
-
 # ---------------------------------------------------------------------------
 # Action handlers
 # ---------------------------------------------------------------------------

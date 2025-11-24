@@ -11,7 +11,6 @@ def post_worker_init(worker):
     Start the scheduler after the worker is initialized so it runs
     alongside the web server (one instance because workers=1).
     """
-    from app import start_scheduler_once, register_signal_handlers
+    from app import start_scheduler_once
 
-    register_signal_handlers()
     start_scheduler_once()

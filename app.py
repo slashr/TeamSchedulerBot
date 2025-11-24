@@ -511,32 +511,6 @@ def shutdown_scheduler(signum, frame) -> None:
         raise SystemExit(0)
 
 
-def stop_scheduler(reason: str = "shutdown") -> None:
-    """Stop the scheduler if running."""
-    global _scheduler_started
-    if not _scheduler_started:
-        return
-    logger.info("Stopping scheduler (%s)", reason)
-    try:
-        scheduler.shutdown(wait=False)
-    except Exception as exc:
-        logger.warning("Error during scheduler shutdown: %s", exc)
-    _scheduler_started = False
-
-
-def register_signal_handlers() -> None:
-    """Register graceful shutdown handlers once."""
-    global _shutdown_registered
-    if _shutdown_registered:
-        return
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            _prev_handlers[sig] = signal.getsignal(sig)
-            signal.signal(sig, shutdown_scheduler)
-        except Exception as exc:
-            logger.warning("Could not register handler for signal %s: %s", sig, exc)
-    _shutdown_registered = True
-
 # ---------------------------------------------------------------------------
 # Action handlers
 # ---------------------------------------------------------------------------

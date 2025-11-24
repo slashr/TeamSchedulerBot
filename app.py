@@ -190,6 +190,7 @@ def load_state() -> int:
                 "State index %s is invalid; resetting to 0", data.get("current_index")
             )
             idx = 0
+            _write_state_locked(idx)
 
         if idx < 0 or idx >= len(team_members):
             logger.warning(

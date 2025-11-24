@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import sys
+import signal
 from typing import List, Dict, Any, Optional
 from flask import Flask, request, Response
 from slack_bolt import App as SlackBoltApp
@@ -334,6 +335,7 @@ scheduler = BackgroundScheduler(
 )
 
 _scheduler_started = False
+_shutdown_registered = False
 
 # Schedule daily reminder (configurable via environment variables)
 scheduler.add_job(
@@ -385,6 +387,32 @@ def start_scheduler_once() -> None:
     scheduler.start()
     _scheduler_started = True
     logger.info("Scheduler started successfully")
+
+
+def shutdown_scheduler(signum, frame) -> None:
+    """Handle termination signals for graceful shutdown."""
+    global _scheduler_started
+    if not _scheduler_started:
+        return
+    logger.info("Signal %s received; shutting down scheduler", signum)
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception as exc:
+        logger.warning("Error during scheduler shutdown: %s", exc)
+    _scheduler_started = False
+
+
+def register_signal_handlers() -> None:
+    """Register graceful shutdown handlers once."""
+    global _shutdown_registered
+    if _shutdown_registered:
+        return
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, shutdown_scheduler)
+        except Exception as exc:
+            logger.warning("Could not register handler for signal %s: %s", sig, exc)
+    _shutdown_registered = True
 
 # ---------------------------------------------------------------------------
 # Action handlers
@@ -545,6 +573,7 @@ def slack_events() -> Response:
 # Main entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    register_signal_handlers()
     # Ensure roster is available; seed from state if present
     current_idx = load_state()
     save_state(current_idx)

@@ -222,6 +222,8 @@ scheduler = BackgroundScheduler(
     timezone=REMINDER_TIMEZONE,
 )
 
+_scheduler_started = False
+
 # Schedule daily reminder (configurable via environment variables)
 scheduler.add_job(
     send_reminder,
@@ -233,6 +235,45 @@ scheduler.add_job(
 
 #Test schedule
 #scheduler.add_job(send_reminder, "cron", minute="*")
+
+
+def should_start_scheduler() -> bool:
+    """
+    Determine whether the scheduler should start in this process/pod.
+    This allows us to limit the scheduler to a single instance when scaling.
+    """
+    enabled = os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
+    if not enabled:
+        logger.info("Scheduler disabled via ENABLE_SCHEDULER=false")
+        return False
+
+    primary_pod = os.getenv("SCHEDULER_POD_NAME")
+    hostname = os.getenv("HOSTNAME")
+    if primary_pod and hostname and hostname != primary_pod:
+        logger.info(
+            "Skipping scheduler on pod %s (primary pod set to %s)",
+            hostname,
+            primary_pod,
+        )
+        return False
+
+    return True
+
+
+def start_scheduler_once() -> None:
+    """
+    Start the APS scheduler if it hasn't been started yet in this process.
+    """
+    global _scheduler_started
+    if _scheduler_started:
+        return
+
+    if not should_start_scheduler():
+        return
+
+    scheduler.start()
+    _scheduler_started = True
+    logger.info("Scheduler started successfully")
 
 # ---------------------------------------------------------------------------
 # Action handlers
@@ -327,8 +368,7 @@ if __name__ == "__main__":
     logger.info("State directory: %s", STATE_DIR)
     logger.info("=====================================")
     
-    scheduler.start()
-    logger.info("Scheduler started successfully")
+    start_scheduler_once()
     
     logger.info("Starting Flask app on 0.0.0.0:3000")
     app.run(host="0.0.0.0", port=3000)

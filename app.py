@@ -336,6 +336,7 @@ scheduler = BackgroundScheduler(
 
 _scheduler_started = False
 _shutdown_registered = False
+_prev_handlers: Dict[int, Optional[signal.Handlers]] = {}
 
 # Schedule daily reminder (configurable via environment variables)
 scheduler.add_job(
@@ -392,13 +393,15 @@ def start_scheduler_once() -> None:
 def shutdown_scheduler(signum, frame) -> None:
     """Handle termination signals for graceful shutdown."""
     stop_scheduler(reason=f"signal {signum}")
-    # Chain to default so gunicorn workers exit promptly
-    try:
-        original = signal.getsignal(signum)
-        if original and original not in (shutdown_scheduler, signal.SIG_DFL, signal.SIG_IGN):
-            original(signum, frame)
-    except Exception:
-        pass
+    # Chain to previous handler so gunicorn workers exit promptly
+    prev = _prev_handlers.get(signum)
+    if prev and prev not in (shutdown_scheduler, signal.SIG_DFL, signal.SIG_IGN):
+        try:
+            prev(signum, frame)
+        except Exception:
+            pass
+    elif prev == signal.SIG_DFL:
+        raise SystemExit(0)
 
 
 def stop_scheduler(reason: str = "shutdown") -> None:
@@ -421,6 +424,7 @@ def register_signal_handlers() -> None:
         return
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
+            _prev_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, shutdown_scheduler)
         except Exception as exc:
             logger.warning("Could not register handler for signal %s: %s", sig, exc)

@@ -182,7 +182,14 @@ def load_state() -> int:
             team_members.clear()
             team_members.extend(stored_members)
 
-        idx = int(data.get("current_index", 0))
+        try:
+            idx = int(data.get("current_index", 0))
+        except (TypeError, ValueError):
+            logger.warning(
+                "State index %s is invalid; resetting to 0", data.get("current_index")
+            )
+            idx = 0
+
         if idx < 0 or idx >= len(team_members):
             logger.warning(
                 "State index %s out of bounds for %d members; resetting to 0",

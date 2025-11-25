@@ -37,7 +37,7 @@ def validate_environment() -> None:
     Validate that all required environment variables are set.
     Exits with error code 1 if any required variables are missing.
     """
-    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"]
+    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DEVOPS_SUPPORT_CHANNEL"]
     missing = [var for var in required_vars if not os.environ.get(var)]
     
     if missing:
@@ -53,16 +53,6 @@ validate_environment()
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_TEAM_MEMBERS = [
-    "U07GAGKL6SY",  # Damian
-    "U04JZU760AD",  # Sopio
-    "U06Q83GFMNW",  # Phil
-    "U07H9H7L7K8",  # Rafa
-    "U041EHKCD3K",  # Martin
-    "U062AK6DQP9",  # Akash
-]
-
-
 def parse_team_members_env() -> List[str]:
     """Parse TEAM_MEMBERS env var (comma-separated Slack user IDs)."""
     raw = os.getenv("TEAM_MEMBERS", "")
@@ -72,9 +62,9 @@ def parse_team_members_env() -> List[str]:
     return members
 
 
-team_members: List[str] = parse_team_members_env() or DEFAULT_TEAM_MEMBERS
+team_members: List[str] = parse_team_members_env()
 
-CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL", "C087GGL7EMT")
+CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL")
 REMINDER_HOUR = int(os.getenv("REMINDER_HOUR", "9"))
 REMINDER_MINUTE = int(os.getenv("REMINDER_MINUTE", "0"))
 REMINDER_TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Europe/Berlin")

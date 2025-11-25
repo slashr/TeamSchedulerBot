@@ -4,10 +4,8 @@ Slack bot that posts a daily rotation reminder with confirm/skip buttons.
 
 ## Run locally
 1) Install deps: `pip install -r requirements.txt`
-2) Set env vars: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`
+2) Set env vars: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `DEVOPS_SUPPORT_CHANNEL`, `TEAM_MEMBERS` (comma-separated Slack user IDs)
 3) Optional env vars:
-   - `TEAM_MEMBERS` comma-separated Slack user IDs (defaults to baked-in list)
-   - `DEVOPS_SUPPORT_CHANNEL` Slack channel ID for reminders
    - `STATE_DIR` (defaults to `/state` for Kubernetes PVC; use `./state` locally)
    - `ENABLE_SCHEDULER=false` to disable APS scheduler
    - `SCHEDULER_POD_NAME` to pin scheduler to a specific pod name when scaling

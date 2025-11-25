@@ -37,7 +37,7 @@ def validate_environment() -> None:
     Validate that all required environment variables are set.
     Exits with error code 1 if any required variables are missing.
     """
-    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"]
+    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DEVOPS_SUPPORT_CHANNEL", "TEAM_MEMBERS"]
     missing = [var for var in required_vars if not os.environ.get(var)]
     
     if missing:
@@ -53,16 +53,6 @@ validate_environment()
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_TEAM_MEMBERS = [
-    "U07GAGKL6SY",  # Damian
-    "U04JZU760AD",  # Sopio
-    "U06Q83GFMNW",  # Phil
-    "U07H9H7L7K8",  # Rafa
-    "U041EHKCD3K",  # Martin
-    "U062AK6DQP9",  # Akash
-]
-
-
 def parse_team_members_env() -> List[str]:
     """Parse TEAM_MEMBERS env var (comma-separated Slack user IDs)."""
     raw = os.getenv("TEAM_MEMBERS", "")
@@ -72,9 +62,11 @@ def parse_team_members_env() -> List[str]:
     return members
 
 
-team_members: List[str] = parse_team_members_env() or DEFAULT_TEAM_MEMBERS
+seed_team_members: List[str] = parse_team_members_env()
 
-CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL", "C087GGL7EMT")
+team_members: List[str] = []
+
+CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL")
 REMINDER_HOUR = int(os.getenv("REMINDER_HOUR", "9"))
 REMINDER_MINUTE = int(os.getenv("REMINDER_MINUTE", "0"))
 REMINDER_TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Europe/Berlin")
@@ -189,15 +181,14 @@ def load_state() -> int:
     global state_loaded
 
     with state_lock:
-        if not team_members:
-            logger.warning("No team members configured; defaulting rotation index to 0")
-            return 0
-
         data = _read_state_locked()
         stored_members = data.get("team_members")
         if stored_members:
             team_members.clear()
             team_members.extend(stored_members)
+        elif seed_team_members:
+            team_members.clear()
+            team_members.extend(seed_team_members)
 
         try:
             idx = int(data.get("current_index", 0))
@@ -208,7 +199,7 @@ def load_state() -> int:
             idx = 0
             _write_state_locked(idx)
 
-        if idx < 0 or idx >= len(team_members):
+        if idx < 0 or (team_members and idx >= len(team_members)):
             logger.warning(
                 "State index %s out of bounds for %d members; resetting to 0",
                 idx,
@@ -716,10 +707,10 @@ if __name__ == "__main__":
     register_signal_handlers()
     # Ensure roster is available; seed from state if present
     current_idx = load_state()
-    save_state(current_idx)
     if not get_team_members():
-        logger.error("No team members configured via TEAM_MEMBERS or defaults; exiting")
+        logger.error("No team members configured via TEAM_MEMBERS or persisted state; exiting")
         sys.exit(1)
+    save_state(current_idx)
 
     logger.info("=== TeamSchedulerBot Configuration ===")
     logger.info("Team members: %d", len(get_team_members()))

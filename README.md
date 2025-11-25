@@ -1,4 +1,4 @@
-# TeamSchedulerBot
+# RotationBot
 
 Slack bot that posts a daily rotation reminder with confirm/skip buttons.
 

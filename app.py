@@ -62,7 +62,9 @@ def parse_team_members_env() -> List[str]:
     return members
 
 
-team_members: List[str] = parse_team_members_env()
+seed_team_members: List[str] = parse_team_members_env()
+
+team_members: List[str] = []
 
 CHANNEL_ID = os.getenv("DEVOPS_SUPPORT_CHANNEL")
 REMINDER_HOUR = int(os.getenv("REMINDER_HOUR", "9"))
@@ -179,15 +181,14 @@ def load_state() -> int:
     global state_loaded
 
     with state_lock:
-        if not team_members:
-            logger.warning("No team members configured; defaulting rotation index to 0")
-            return 0
-
         data = _read_state_locked()
         stored_members = data.get("team_members")
         if stored_members:
             team_members.clear()
             team_members.extend(stored_members)
+        elif seed_team_members:
+            team_members.clear()
+            team_members.extend(seed_team_members)
 
         try:
             idx = int(data.get("current_index", 0))
@@ -198,7 +199,7 @@ def load_state() -> int:
             idx = 0
             _write_state_locked(idx)
 
-        if idx < 0 or idx >= len(team_members):
+        if idx < 0 or (team_members and idx >= len(team_members)):
             logger.warning(
                 "State index %s out of bounds for %d members; resetting to 0",
                 idx,
@@ -706,10 +707,10 @@ if __name__ == "__main__":
     register_signal_handlers()
     # Ensure roster is available; seed from state if present
     current_idx = load_state()
-    save_state(current_idx)
     if not get_team_members():
-        logger.error("No team members configured via TEAM_MEMBERS or defaults; exiting")
+        logger.error("No team members configured via TEAM_MEMBERS or persisted state; exiting")
         sys.exit(1)
+    save_state(current_idx)
 
     logger.info("=== TeamSchedulerBot Configuration ===")
     logger.info("Team members: %d", len(get_team_members()))

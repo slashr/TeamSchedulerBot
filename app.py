@@ -37,7 +37,7 @@ def validate_environment() -> None:
     Validate that all required environment variables are set.
     Exits with error code 1 if any required variables are missing.
     """
-    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DEVOPS_SUPPORT_CHANNEL"]
+    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DEVOPS_SUPPORT_CHANNEL", "TEAM_MEMBERS"]
     missing = [var for var in required_vars if not os.environ.get(var)]
     
     if missing:

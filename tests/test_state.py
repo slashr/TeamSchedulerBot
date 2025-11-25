@@ -7,6 +7,7 @@ import sys
 def reload_app(monkeypatch, tmp_path):
     monkeypatch.setenv("SLACK_BOT_TOKEN", "dummy")
     monkeypatch.setenv("SLACK_SIGNING_SECRET", "dummy")
+    monkeypatch.setenv("DEVOPS_SUPPORT_CHANNEL", "DUMMYCHANNEL")
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
     sys.modules.pop("app", None)
     return importlib.import_module("app")

@@ -91,6 +91,7 @@ except Exception as exc:  # Fall back to local path if PVC is unavailable
 STATE_FILE = os.path.join(STATE_DIR, "rotation_state.json")
 state_lock = Lock()
 state_loaded = False
+current_assignee_index: Optional[int] = None
 
 # ---------------------------------------------------------------------------
 # Slack Bolt / Flask setup
@@ -153,9 +154,13 @@ def _read_state_locked() -> Dict[str, Any]:
         return {}
 
 
-def _write_state_locked(idx: int) -> None:
-    """Persist rotation index and current team members. Caller must hold state_lock."""
+def _write_state_locked(idx: int, assignee_idx: Optional[int] = None) -> None:
+    """Persist rotation index, current assignee, and current team members. Caller must hold state_lock."""
     data = {"current_index": idx, "team_members": team_members}
+    if assignee_idx is None:
+        assignee_idx = current_assignee_index
+    if assignee_idx is not None:
+        data["current_assignee_index"] = assignee_idx
     fd, tmp_path = tempfile.mkstemp(prefix="rotation_state_", dir=STATE_DIR)
     try:
         with os.fdopen(fd, "w") as fp:
@@ -186,7 +191,7 @@ def load_state() -> int:
     Returns:
         The current rotation index (0-based)
     """
-    global state_loaded
+    global state_loaded, current_assignee_index
 
     with state_lock:
         if not team_members:
@@ -199,6 +204,7 @@ def load_state() -> int:
             team_members.clear()
             team_members.extend(stored_members)
 
+        state_changed = False
         try:
             idx = int(data.get("current_index", 0))
         except (TypeError, ValueError):
@@ -206,7 +212,7 @@ def load_state() -> int:
                 "State index %s is invalid; resetting to 0", data.get("current_index")
             )
             idx = 0
-            _write_state_locked(idx)
+            state_changed = True
 
         if idx < 0 or idx >= len(team_members):
             logger.warning(
@@ -215,27 +221,89 @@ def load_state() -> int:
                 len(team_members),
             )
             idx = 0
-            _write_state_locked(idx)
+            state_changed = True
 
+        assignee_raw = data.get("current_assignee_index", idx)
+        assignee_missing = "current_assignee_index" not in data
+        if assignee_missing:
+            state_changed = True
+        try:
+            assignee_idx = int(assignee_raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "State current_assignee_index %s is invalid; resetting to %d",
+                assignee_raw,
+                idx,
+            )
+            assignee_idx = idx
+            state_changed = True
+
+        if assignee_idx < 0 or assignee_idx >= len(team_members):
+            if not assignee_missing:
+                logger.warning(
+                    "State current_assignee_index %s out of bounds for %d members; resetting to %d",
+                    assignee_idx,
+                    len(team_members),
+                    idx,
+                )
+            assignee_idx = idx
+            state_changed = True
+
+        current_assignee_index = assignee_idx
+        if state_changed:
+            _write_state_locked(idx, assignee_idx)
         state_loaded = True
         return idx
 
 
-def save_state(idx: int) -> None:
+def get_current_assignee_index() -> int:
+    """Retrieve the current assignee index (clamped to the roster)."""
+    idx = load_state()
+    with state_lock:
+        member_count = len(team_members)
+        if member_count == 0:
+            return 0
+        if current_assignee_index is None:
+            return idx
+        if 0 <= current_assignee_index < member_count:
+            return current_assignee_index
+        return idx
+
+
+def save_state(idx: int, assignee_idx: Optional[int] = None) -> None:
     """
-    Save the rotation index to persistent state file.
+    Save the rotation index (and optionally the current assignee) to persistent state.
     
     Args:
         idx: The rotation index to save
+        assignee_idx: Optional index of the current assignee to persist
     """
     with state_lock:
-        _write_state_locked(idx)
+        global current_assignee_index
+        member_count = len(team_members)
+        if assignee_idx is None:
+            assignee_idx = current_assignee_index
+        else:
+            try:
+                assignee_idx = int(assignee_idx)
+            except (TypeError, ValueError):
+                assignee_idx = current_assignee_index
+
+        if member_count and (assignee_idx is None or assignee_idx < 0 or assignee_idx >= member_count):
+            assignee_idx = idx
+
+        current_assignee_index = assignee_idx
+        _write_state_locked(idx, assignee_idx)
 
 
-def advance_rotation() -> int:
+def advance_rotation(current_assignee_idx: Optional[int] = None, use_next_as_assignee: bool = False) -> int:
     """
     Advance to the next person in the rotation.
     
+    Args:
+        current_assignee_idx: Optional index to persist as the current assignee
+        use_next_as_assignee: If True, set the computed next index as the current assignee
+
     Returns:
         The new rotation index
     """
@@ -246,7 +314,8 @@ def advance_rotation() -> int:
 
     idx = load_state()
     next_idx = (idx + 1) % len(members)
-    save_state(next_idx)
+    assignee_to_store = next_idx if use_next_as_assignee else current_assignee_idx
+    save_state(next_idx, assignee_to_store)
     logger.info("Rotation advanced from index %d to %d", idx, next_idx)
     return next_idx
 
@@ -274,7 +343,7 @@ def update_team_members(new_members: List[str], removed_index: Optional[int] = N
         raise ValueError("Team members list cannot be empty")
 
     with state_lock:
-        global team_members
+        global team_members, current_assignee_index
         data = _read_state_locked()
         try:
             current_idx = int(data.get("current_index", 0))
@@ -291,9 +360,24 @@ def update_team_members(new_members: List[str], removed_index: Optional[int] = N
         if current_idx < 0 or current_idx >= len(cleaned):
             current_idx = 0
 
+        try:
+            assignee_idx = int(data.get("current_assignee_index", current_idx))
+        except (TypeError, ValueError):
+            assignee_idx = current_idx
+
+        if removed_index is not None:
+            if removed_index == assignee_idx:
+                assignee_idx = current_idx
+            elif removed_index < assignee_idx:
+                assignee_idx -= 1
+
+        if assignee_idx < 0 or assignee_idx >= len(cleaned):
+            assignee_idx = current_idx
+
         team_members.clear()
         team_members.extend(cleaned)
-        _write_state_locked(current_idx)
+        current_assignee_index = assignee_idx
+        _write_state_locked(current_idx, assignee_idx)
         return current_idx
 
 
@@ -371,6 +455,7 @@ def send_reminder() -> None:
             return
     
         idx = load_state()
+        save_state(idx, assignee_idx=idx)
         members = get_team_members()
         user_id = members[idx]
         client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
@@ -510,6 +595,12 @@ def handle_confirm(ack, body, client, logger) -> None:
     try:
         user_clicked = body["user"]["id"]
         assigned = body["actions"][0]["value"]
+        members = get_team_members(force_reload=True)
+        assigned_idx = None
+        if assigned in members:
+            assigned_idx = members.index(assigned)
+        else:
+            logger.warning("Assigned user %s not found in roster during confirm", assigned)
         
         if user_clicked == assigned:
             msg = f"<@{user_clicked}> has confirmed #devops_support for today :meow_salute:"
@@ -522,7 +613,7 @@ def handle_confirm(ack, body, client, logger) -> None:
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": msg}}],
             )
             logger.info("User %s confirmed assignment", user_clicked)
-            advance_rotation()
+            advance_rotation(current_assignee_idx=assigned_idx)
         else:
             logger.warning(
                 "User %s attempted to confirm assignment meant for %s",
@@ -556,10 +647,9 @@ def handle_skip(ack, body, client, logger) -> None:
             return
 
         idx = load_state()
-        members = get_team_members(force_reload=True)
         current_user = members[idx]
-        next_idx = advance_rotation()
-        members = get_team_members(force_reload=True)
+        next_idx = (idx + 1) % len(members)
+        save_state(next_idx, assignee_idx=next_idx)
         next_user = members[next_idx]
         
         msg = (
@@ -573,7 +663,12 @@ def handle_skip(ack, body, client, logger) -> None:
             text=msg,
             blocks=get_message_blocks(msg, next_user),
         )
-        logger.info("User %s skipped; reassigned to %s", current_user, next_user)
+        logger.info(
+            "User %s skipped; reassigned to %s (rotation index now %d)",
+            current_user,
+            next_user,
+            next_idx,
+        )
     except SlackApiError as exc:
         logger.error("Slack API error handling skip action: %s", exc, exc_info=True)
     except Exception as exc:
@@ -605,9 +700,22 @@ def handle_rotation_command(ack, body, respond, logger) -> None:
                 respond("No team members configured.")
                 return
             lines = []
-            for i, user_id in enumerate(members, start=1):
-                marker = " (current)" if i - 1 == idx else ""
-                lines.append(f"{i}. <@{user_id}>{marker}")
+            current_idx = get_current_assignee_index()
+            if current_idx >= len(members):
+                current_idx = idx
+            if len(members) == 1:
+                next_idx = current_idx
+            else:
+                next_idx = idx if idx != current_idx else (idx + 1) % len(members)
+
+            for i, user_id in enumerate(members):
+                markers = []
+                if i == current_idx:
+                    markers.append("current")
+                if i == next_idx and (len(members) == 1 or i != current_idx):
+                    markers.append("next")
+                marker = f" ({', '.join(markers)})" if markers else ""
+                lines.append(f"{i + 1}. <@{user_id}>{marker}")
             respond("\n".join(lines))
             return
 

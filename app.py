@@ -810,6 +810,8 @@ def metrics() -> Response:
                 f"team_members_count {len(members)}",
                 f"scheduler_started {int(_scheduler_started)}",
                 f"last_reminder_timestamp {ts_numeric or 0}",
+                f"current_assignee_index {get_current_assignee_index()}",
+                f"next_rotation_index {((idx + 1) % len(members)) if members else 0}",
             ]
         )
         return Response(content, status=200, mimetype="text/plain")

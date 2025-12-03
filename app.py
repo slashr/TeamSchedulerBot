@@ -5,6 +5,7 @@ import sys
 import time
 import signal
 import tempfile
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from flask import Flask, request, Response
@@ -161,6 +162,16 @@ def _write_state_locked(idx: int, assignee_idx: Optional[int] = None) -> None:
         assignee_idx = current_assignee_index
     if assignee_idx is not None:
         data["current_assignee_index"] = assignee_idx
+    backup_path = f"{STATE_FILE}.bak"
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "rb") as src, open(backup_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+        except Exception as exc:
+            logger.warning("Failed to back up state file to %s (%s)", backup_path, exc)
+
     fd, tmp_path = tempfile.mkstemp(prefix="rotation_state_", dir=STATE_DIR)
     try:
         with os.fdopen(fd, "w") as fp:
@@ -173,6 +184,11 @@ def _write_state_locked(idx: int, assignee_idx: Optional[int] = None) -> None:
             os.unlink(tmp_path)
         except Exception:
             pass
+        if os.path.exists(backup_path):
+            try:
+                os.replace(backup_path, STATE_FILE)
+            except Exception as exc:
+                logger.warning("Failed to restore state from backup %s (%s)", backup_path, exc)
         raise
 
 
